@@ -1,0 +1,13 @@
+services:
+  orchestrator:
+    build: .
+    container_name: fc-orchestrator
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      PORTFOLIO_API_URL: http://host.docker.internal:8080
+      CORS_ORIGINS: http://localhost:3000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

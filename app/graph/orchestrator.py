@@ -2,12 +2,11 @@ from pathlib import Path
 from typing import Annotated, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 
 from app import agents
-from app.config import settings
+from app.llm import build_chat_model, llm_is_configured, missing_llm_config_message
 from app.tools.portfolio import fetch_dashboard
 
 SYSTEM_PROMPT = (Path(__file__).parent.parent / "prompts" / "system_prompt.txt").read_text()
@@ -78,19 +77,15 @@ def _needs_portfolio_context(agent: str) -> bool:
 
 
 async def respond_node(state: AgentState) -> AgentState:
-    if not settings.openai_api_key:
+    if not llm_is_configured():
         fallback = (
-            "AI responses require OPENAI_API_KEY. "
+            f"{missing_llm_config_message()} "
             f"Active agent: {state.get('active_agent')}. "
             f"Portfolio context: {state.get('portfolio_context', 'N/A')}"
         )
         return {**state, "messages": state["messages"] + [AIMessage(content=fallback)]}
 
-    llm = ChatOpenAI(
-        model=settings.openai_model,
-        api_key=settings.openai_api_key,
-        temperature=0.3,
-    )
+    llm = build_chat_model()
     agent = state.get("active_agent", agents.GENERAL)
     agent_instruction = {
         agents.REPORT_GENERATION: "Produce a concise wealth report narrative using only the portfolio context.",

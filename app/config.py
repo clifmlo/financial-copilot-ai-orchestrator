@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -8,8 +10,17 @@ class Settings(BaseSettings):
 
     portfolio_api_url: str = "http://localhost:8080"
     portfolio_api_version: str = "v1"
-    openai_api_key: str = ""
-    openai_model: str = "gpt-4o-mini"
+
+    llm_provider: Literal["gemini", "azure_openai"] = "gemini"
+
+    google_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash"
+
+    azure_openai_api_key: str = ""
+    azure_openai_endpoint: str = ""
+    azure_openai_api_version: str = "2024-08-01-preview"
+    azure_openai_deployment: str = ""
+
     port: int = 8000
     cors_origins: str = "http://localhost:3000"
 

@@ -40,7 +40,7 @@ financial-copilot-web  ──►  financial-copilot-ai-orchestrator  ──►  
 
 ```powershell
 cp .env.example .env
-# Set OPENAI_API_KEY and PORTFOLIO_API_URL
+# Set GOOGLE_API_KEY and PORTFOLIO_API_URL
 
 .\scripts\run.ps1
 ```
@@ -60,8 +60,13 @@ uvicorn app.main:app --reload --port 8000
 |----------|-------------|
 | `PORTFOLIO_API_URL` | Base URL of financial-copilot-api (e.g. `http://localhost:8080`) |
 | `PORTFOLIO_API_VERSION` | API version prefix (default `v1`) |
-| `OPENAI_API_KEY` | OpenAI API key |
-| `OPENAI_MODEL` | Model id (default `gpt-4o-mini`) |
+| `LLM_PROVIDER` | `gemini` (local dev) or `azure_openai` (production) |
+| `GOOGLE_API_KEY` | Gemini API key ([Google AI Studio](https://aistudio.google.com/apikey)) |
+| `GEMINI_MODEL` | Gemini model id (default `gemini-2.5-flash`) |
+| `AZURE_OPENAI_API_KEY` | Azure OpenAI key (production) |
+| `AZURE_OPENAI_ENDPOINT` | Azure OpenAI resource endpoint |
+| `AZURE_OPENAI_API_VERSION` | API version (default `2024-08-01-preview`) |
+| `AZURE_OPENAI_DEPLOYMENT` | Azure OpenAI deployment name |
 | `CORS_ORIGINS` | Comma-separated browser origins (default `http://localhost:3000`) |
 
 ## Docker
@@ -70,7 +75,7 @@ uvicorn app.main:app --reload --port 8000
 docker build -t financial-copilot-ai-orchestrator .
 docker run -p 8000:8000 \
   -e PORTFOLIO_API_URL=http://host.docker.internal:8080 \
-  -e OPENAI_API_KEY=sk-... \
+  -e GOOGLE_API_KEY=... \
   financial-copilot-ai-orchestrator
 ```
 
@@ -78,9 +83,11 @@ docker run -p 8000:8000 \
 
 GitHub Actions workflow `.github/workflows/deploy.yml` builds the image, pushes to ACR, and deploys to Container Apps.
 
-Configure repository **variables**: `ACR_LOGIN_SERVER`, `ACR_NAME`, `ACA_ORCHESTRATOR_APP_NAME`, `AZURE_RESOURCE_GROUP`, `PORTFOLIO_API_URL`, `OPENAI_MODEL`, `CORS_ORIGINS`.
+Configure repository **variables**: `ACR_LOGIN_SERVER`, `ACR_NAME`, `ACA_ORCHESTRATOR_APP_NAME`, `AZURE_RESOURCE_GROUP`, `PORTFOLIO_API_URL`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_VERSION`, `AZURE_OPENAI_DEPLOYMENT`, `CORS_ORIGINS`.
 
-Configure **secrets**: `ACR_USERNAME`, `ACR_PASSWORD`, `OPENAI_API_KEY`.
+Configure **secrets**: `ACR_USERNAME`, `ACR_PASSWORD`, `AZURE_OPENAI_API_KEY`.
+
+Production deploy sets `LLM_PROVIDER=azure_openai` automatically.
 
 ## Project layout
 
