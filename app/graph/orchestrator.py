@@ -97,15 +97,15 @@ async def respond_node(state: AgentState) -> AgentState:
         agents.PORTFOLIO_ANALYSIS: "Analyse the portfolio using the provided figures.",
     }.get(agent, "Answer the user's question clearly.")
 
-    system = SystemMessage(content=SYSTEM_PROMPT)
-    context_msg = SystemMessage(
+    system = SystemMessage(
         content=(
+            f"{SYSTEM_PROMPT}\n\n"
             f"Active agent: {agent}\n"
             f"Task: {agent_instruction}\n"
             f"{state.get('portfolio_context', '')}"
         )
     )
-    response = await llm.ainvoke([system, context_msg, *state["messages"]])
+    response = await llm.ainvoke([system, *state["messages"]])
     return {**state, "messages": state["messages"] + [response]}
 
 
