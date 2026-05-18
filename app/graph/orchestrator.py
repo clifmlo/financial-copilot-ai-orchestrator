@@ -11,6 +11,40 @@ from app.tools.portfolio import fetch_dashboard
 
 SYSTEM_PROMPT = (Path(__file__).parent.parent / "prompts" / "system_prompt.txt").read_text()
 
+BRIEF_TASK_SUFFIX = (
+    " Keep the reply conversational and concise (2–4 short paragraphs max). "
+    "Offer to go deeper only if the user wants more."
+)
+
+
+def messages_from_history(history: list[dict[str, str]]) -> list[BaseMessage]:
+    """Convert API message dicts to LangChain messages."""
+    result: list[BaseMessage] = []
+    for item in history:
+        role = item.get("role", "")
+        content = (item.get("content") or "").strip()
+        if not content:
+            continue
+        if role == "user":
+            result.append(HumanMessage(content=content))
+        elif role == "assistant":
+            result.append(AIMessage(content=content))
+    return result
+
+
+def trim_message_history(messages: list[BaseMessage], max_messages: int) -> list[BaseMessage]:
+    if len(messages) <= max_messages:
+        return messages
+    return messages[-max_messages:]
+
+
+def _last_user_text(messages: list[BaseMessage]) -> str:
+    for msg in reversed(messages):
+        if isinstance(msg, HumanMessage):
+            content = msg.content
+            return content if isinstance(content, str) else str(content)
+    return ""
+
 
 class AgentState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
@@ -38,7 +72,7 @@ def _route_agent(user_text: str) -> str:
 
 
 async def planner_node(state: AgentState) -> AgentState:
-    last = state["messages"][-1].content if state["messages"] else ""
+    last = _last_user_text(state["messages"])
     agent = _route_agent(last)
     return {**state, "active_agent": agent}
 
@@ -88,14 +122,31 @@ async def respond_node(state: AgentState) -> AgentState:
     llm = build_chat_model()
     agent = state.get("active_agent", agents.GENERAL)
     agent_instruction = {
-        agents.REPORT_GENERATION: "Produce a concise wealth report narrative using only the portfolio context.",
-        agents.SCENARIO: "Interpret the user's scenario using portfolio context; discuss trade-offs, not advice.",
-        agents.RECOMMENDATION: "Narrate recommendations grounded in the portfolio context; explain reasoning.",
-        agents.TAX: "Discuss tax considerations educationally; defer calculations to the portfolio API.",
-        agents.BOND_OPTIMISATION: "Discuss bond/mortgage trade-offs using liability figures from context.",
-        agents.RISK_ANALYSIS: "Assess risk and diversification using holdings and allocation from context.",
-        agents.PORTFOLIO_ANALYSIS: "Analyse the portfolio using the provided figures.",
-    }.get(agent, "Answer the user's question clearly.")
+        agents.REPORT_GENERATION: (
+            "Give a brief wealth snapshot from the portfolio context (bullet highlights). "
+            "Offer a fuller report only if the user asks."
+        ),
+        agents.SCENARIO: (
+            "Answer the what-if question in plain language with 2–3 key trade-offs from context."
+        ),
+        agents.RECOMMENDATION: (
+            "Suggest 2–3 practical next steps grounded in context; one sentence each."
+        ),
+        agents.TAX: (
+            "Explain the tax point simply; flag that exact numbers come from the portfolio API."
+        ),
+        agents.BOND_OPTIMISATION: (
+            "Compare bond payoff vs investing in 2–3 sentences using liability figures."
+        ),
+        agents.RISK_ANALYSIS: (
+            "Summarise main risk/concentration issues in a few bullets from holdings and allocation."
+        ),
+        agents.PORTFOLIO_ANALYSIS: (
+            "Summarise portfolio health in a short, friendly answer using the figures provided."
+        ),
+    }.get(agent, "Answer the user's latest question in a conversational tone.")
+
+    agent_instruction += BRIEF_TASK_SUFFIX
 
     system = SystemMessage(
         content=(
@@ -105,7 +156,8 @@ async def respond_node(state: AgentState) -> AgentState:
             f"{state.get('portfolio_context', '')}"
         )
     )
-    response = await llm.ainvoke([system, *state["messages"]])
+    history = trim_message_history(state["messages"], 20)
+    response = await llm.ainvoke([system, *history])
     return {**state, "messages": state["messages"] + [response]}
 
 
@@ -113,7 +165,7 @@ def _after_planner(state: AgentState) -> str:
     return "portfolio" if _needs_portfolio_context(state.get("active_agent", "")) else "respond"
 
 
-def build_graph():
+def build_graph(*, checkpointer=None):
     graph = StateGraph(AgentState)
     graph.add_node("planner", planner_node)
     graph.add_node("portfolio", portfolio_context_node)
@@ -127,7 +179,4 @@ def build_graph():
     )
     graph.add_edge("portfolio", "respond")
     graph.add_edge("respond", END)
-    return graph.compile()
-
-
-orchestrator = build_graph()
+    return graph.compile(checkpointer=checkpointer)

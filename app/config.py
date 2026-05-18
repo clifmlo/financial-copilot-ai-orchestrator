@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     azure_openai_api_version: str = "2024-08-01-preview"
     azure_openai_deployment: str = ""
 
+    llm_max_tokens: int = 800
+    llm_temperature: float = 0.5
+
     port: int = 8000
     cors_origins: str = "http://localhost:3000"
 

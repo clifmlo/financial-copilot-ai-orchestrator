@@ -1,3 +1,3 @@
-from app.graph.orchestrator import orchestrator
+from app.graph.chat_service import orchestrator
 
 __all__ = ["orchestrator"]

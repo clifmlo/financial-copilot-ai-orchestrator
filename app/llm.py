@@ -33,7 +33,8 @@ def build_chat_model() -> BaseChatModel:
         return ChatGoogleGenerativeAI(
             model=settings.gemini_model,
             google_api_key=settings.google_api_key,
-            temperature=0.3,
+            temperature=settings.llm_temperature,
+            max_output_tokens=settings.llm_max_tokens,
         )
 
     if settings.llm_provider == "azure_openai":
@@ -44,7 +45,8 @@ def build_chat_model() -> BaseChatModel:
             api_key=settings.azure_openai_api_key,
             api_version=settings.azure_openai_api_version,
             azure_deployment=settings.azure_openai_deployment,
-            temperature=0.3,
+            temperature=settings.llm_temperature,
+            max_tokens=settings.llm_max_tokens,
         )
 
     raise ValueError(f"Unsupported LLM_PROVIDER: {settings.llm_provider}")
