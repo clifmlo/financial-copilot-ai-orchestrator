@@ -1,9 +1,10 @@
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 
+from app.auth_context import set_auth_token
 from app.graph.chat_service import (
     ensure_session_id,
     get_session_messages,
@@ -44,6 +45,15 @@ class SessionHistoryResponse(BaseModel):
     messages: list[ChatMessage]
 
 
+def _apply_auth(authorization: str | None) -> None:
+    if authorization and authorization.startswith("Bearer "):
+        set_auth_token(authorization[7:].strip())
+    elif authorization:
+        set_auth_token(authorization.strip())
+    else:
+        set_auth_token(None)
+
+
 def _resolve_user_text(request: ChatRequest) -> str:
     if request.message and request.message.strip():
         return request.message.strip()
@@ -55,7 +65,11 @@ def _resolve_user_text(request: ChatRequest) -> str:
 
 
 @router.get("/chat/session/{session_id}", response_model=SessionHistoryResponse)
-async def get_session(session_id: str):
+async def get_session(
+    session_id: str,
+    authorization: str | None = Header(default=None),
+):
+    _apply_auth(authorization)
     history = await get_session_messages(session_id)
     return SessionHistoryResponse(
         session_id=session_id,
@@ -64,7 +78,11 @@ async def get_session(session_id: str):
 
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(
+    request: ChatRequest,
+    authorization: str | None = Header(default=None),
+):
+    _apply_auth(authorization)
     session_id = ensure_session_id(request.session_id)
     user_text = _resolve_user_text(request)
     reply, active_agent = await invoke_chat(session_id, user_text)
@@ -76,7 +94,11 @@ async def chat(request: ChatRequest):
 
 
 @router.post("/chat/stream")
-async def chat_stream(request: ChatRequest):
+async def chat_stream(
+    request: ChatRequest,
+    authorization: str | None = Header(default=None),
+):
+    _apply_auth(authorization)
     session_id = ensure_session_id(request.session_id)
     user_text = _resolve_user_text(request)
 

@@ -9,6 +9,7 @@ from typing import Any
 
 import httpx
 
+from app.auth_context import get_auth_token
 from app.config import settings
 
 
@@ -32,10 +33,17 @@ class PortfolioApiClient:
         self._base = (base_url or settings.portfolio_api_base).rstrip("/")
         self._timeout = timeout
 
+    def _auth_headers(self) -> dict[str, str]:
+        token = get_auth_token()
+        if not token:
+            return {}
+        return {"Authorization": f"Bearer {token}"}
+
     async def _request(self, method: str, path: str, **kwargs: Any) -> Any:
         url = f"{self._base}{path}"
+        headers = {**self._auth_headers(), **kwargs.pop("headers", {})}
         async with httpx.AsyncClient(timeout=self._timeout) as client:
-            response = await client.request(method, url, **kwargs)
+            response = await client.request(method, url, headers=headers, **kwargs)
         if response.is_error:
             raise PortfolioApiError(response.status_code, response.text)
         if response.status_code == 204:

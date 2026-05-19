@@ -93,7 +93,7 @@ async def portfolio_context_node(state: AgentState) -> AgentState:
     except Exception as exc:
         context = (
             f"Portfolio data unavailable from API: {exc}. "
-            "Suggest seeding demo data via POST /api/v1/demo/seed on the portfolio API."
+            "Suggest signing in and importing portfolio data, or checking API connectivity."
         )
     return {**state, "portfolio_context": context}
 
