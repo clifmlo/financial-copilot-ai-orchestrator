@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.5
 
     port: int = 8000
-    cors_origins: str = "http://localhost:3000"
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
     @property
     def portfolio_api_base(self) -> str:

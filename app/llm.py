@@ -26,7 +26,9 @@ def missing_llm_config_message() -> str:
     return f"Unknown LLM_PROVIDER: {settings.llm_provider}"
 
 
-def build_chat_model() -> BaseChatModel:
+def build_chat_model(*, max_tokens: int | None = None) -> BaseChatModel:
+    token_limit = max_tokens if max_tokens is not None else settings.llm_max_tokens
+
     if settings.llm_provider == "gemini":
         from langchain_google_genai import ChatGoogleGenerativeAI
 
@@ -34,7 +36,7 @@ def build_chat_model() -> BaseChatModel:
             model=settings.gemini_model,
             google_api_key=settings.google_api_key,
             temperature=settings.llm_temperature,
-            max_output_tokens=settings.llm_max_tokens,
+            max_output_tokens=token_limit,
         )
 
     if settings.llm_provider == "azure_openai":
@@ -46,7 +48,7 @@ def build_chat_model() -> BaseChatModel:
             api_version=settings.azure_openai_api_version,
             azure_deployment=settings.azure_openai_deployment,
             temperature=settings.llm_temperature,
-            max_tokens=settings.llm_max_tokens,
+            max_tokens=token_limit,
         )
 
     raise ValueError(f"Unsupported LLM_PROVIDER: {settings.llm_provider}")
