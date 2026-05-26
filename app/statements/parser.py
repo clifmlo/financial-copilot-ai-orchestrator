@@ -6,7 +6,12 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import ValidationError
 
 from app.llm import build_chat_model, llm_is_configured, missing_llm_config_message
-from app.statements.schemas import MONEY_QUANT, ParsedStatement, StatementProvider
+from app.statements.schemas import (
+    MONEY_QUANT,
+    ParsedLiability,
+    ParsedStatement,
+    StatementProvider,
+)
 
 PROVIDER_INSTITUTION = {
     StatementProvider.EASY_EQUITIES: "EasyEquities",
@@ -39,13 +44,19 @@ ABSA bank, investment, or home loan statement.
 - For home loan or vehicle finance statements: use statement_type LOAN, account_type LOAN, and
   populate parsed_liability with:
   - liability_type: HOME_LOAN for home loans, VEHICLE_FINANCE for vehicle finance
-  - outstanding_balance: the current outstanding balance
+  - outstanding_balance: use the CLOSING BALANCE from transactions (not the total loan amount)
   - interest_rate: the annual interest rate (e.g. 9.4 for 9.4%)
-  - minimum_payment: the monthly instalment amount
-  - original_term_months: the original loan term in months (e.g. 240 for 20 years)
+  - minimum_payment: the "Total Repayment" or monthly instalment amount
+  - original_term_months: the original loan term in months (e.g. 240 for 20 years) if shown
   - remaining_term_months: remaining months if shown
   - account_number: the loan account number
   Holdings should be empty for loan statements.
+  If a FlexiReserve balance is shown, set accessFacilityEnabled to true.
+
+IMPORTANT: Look for these keywords that indicate a LOAN statement (NOT investment):
+  "Mortgage", "Home Loan", "Interim Mortgage", "Total loan amount", "Repayment",
+  "FlexiReserve", "INTEREST CAPITALIZED", "CLOSING BALANCE", "Property Description".
+  If ANY of these appear, this is a LOAN statement — set statement_type to "LOAN".
 """,
     StatementProvider.TENX_RA: """
 10X retirement annuity (RA) statement. Extract RA account name, fund names, and fund values in ZAR.
@@ -201,6 +212,8 @@ For LOAN statements, set holdings to [] and populate parsed_liability."""
     if not result.account.institution:
         result.account.institution = institution
 
+    result = _auto_detect_loan(result, text, institution)
+
     if result.statement_type == "LOAN":
         if result.parsed_liability and not result.parsed_liability.institution:
             result.parsed_liability.institution = institution
@@ -217,3 +230,76 @@ For LOAN statements, set holdings to [] and populate parsed_liability."""
             )
 
     return _reconcile_totals(result)
+
+
+_LOAN_KEYWORDS = re.compile(
+    r"mortgage|home\s*loan|vehicle\s*finance|total\s*loan\s*amount|"
+    r"flexireserve|interest\s*capitali[sz]ed|repayment\s*due\s*day|"
+    r"interim\s*mortgage|bond\s*statement|property\s*description",
+    re.IGNORECASE,
+)
+
+
+def _auto_detect_loan(
+    result: ParsedStatement, pdf_text: str, institution: str
+) -> ParsedStatement:
+    """Fix misclassified loan statements using keyword detection and account_type."""
+    if result.statement_type == "LOAN":
+        return result
+
+    is_loan_account_type = result.account.account_type == "LOAN"
+    has_loan_keywords = bool(_LOAN_KEYWORDS.search(pdf_text[:5000]))
+
+    if not is_loan_account_type and not has_loan_keywords:
+        return result
+
+    result.statement_type = "LOAN"
+    result.account.account_type = "LOAN"
+
+    if result.parsed_liability:
+        return result
+
+    balance = _extract_amount(pdf_text, r"closing\s*balance\s*(?:R?\s*)([\d,]+\.?\d*)")
+    if not balance:
+        balance = _extract_amount(pdf_text, r"total\s*loan\s*amount\s*(?:R?\s*)([\d,]+\.?\d*)")
+    rate = _extract_amount(pdf_text, r"interest\s*rate\s*([\d.]+)\s*%")
+    payment = _extract_amount(pdf_text, r"total\s*repayment\s*(?:R?\s*)([\d,]+\.?\d*)")
+    if not payment:
+        payment = _extract_amount(pdf_text, r"instalment\s*(?:R?\s*)([\d,]+\.?\d*)")
+    acct_num = _extract_text(pdf_text, r"account\s*number\s*([\d]+)")
+
+    if balance:
+        from decimal import Decimal
+
+        result.parsed_liability = ParsedLiability(
+            liability_type="HOME_LOAN" if has_loan_keywords else "OTHER",
+            name=result.account.name,
+            institution=institution,
+            currency=result.account.currency,
+            outstanding_balance=Decimal(str(balance)),
+            interest_rate=Decimal(str(rate)) if rate else Decimal("0"),
+            minimum_payment=Decimal(str(payment)) if payment else None,
+            account_number=acct_num,
+        )
+        result.holdings = []
+        result.statement_total = Decimal(str(balance))
+        result.warnings.append(
+            "Statement was auto-detected as a loan from PDF keywords."
+        )
+
+    return result
+
+
+def _extract_amount(text: str, pattern: str) -> float | None:
+    m = re.search(pattern, text, re.IGNORECASE)
+    if m:
+        try:
+            return float(m.group(1).replace(",", ""))
+        except ValueError:
+            pass
+    return None
+
+
+def _extract_text(text: str, pattern: str) -> str | None:
+    m = re.search(pattern, text, re.IGNORECASE)
+    return m.group(1).strip() if m else None
