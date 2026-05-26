@@ -139,3 +139,30 @@ async def equity_endpoint(
 ):
     """Calculate home equity from property value and bond balance."""
     return {"explanation": compute_home_equity(property_value, bond_balance)}
+
+
+# ---- Net worth history (time-series) ----------------------------------------
+
+
+@router.get("/history")
+async def balance_sheet_history(
+    authorization: str | None = Header(default=None),
+):
+    """Fetch monthly net worth snapshots for time-series charting."""
+    _apply_auth(authorization)
+    try:
+        return await get_portfolio_client().get_balance_sheet_history()
+    except PortfolioApiError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
+@router.post("/snapshot")
+async def take_snapshot(
+    authorization: str | None = Header(default=None),
+):
+    """Take an on-demand net worth snapshot for the current user."""
+    _apply_auth(authorization)
+    try:
+        return await get_portfolio_client().take_snapshot()
+    except PortfolioApiError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc

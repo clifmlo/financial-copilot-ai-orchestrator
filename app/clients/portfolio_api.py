@@ -146,6 +146,12 @@ class PortfolioApiClient:
     async def get_home_equity(self) -> dict:
         return await self._request("GET", "/balance-sheet/home-equity")
 
+    async def get_balance_sheet_history(self) -> list:
+        return await self._request("GET", "/balance-sheet/history")
+
+    async def take_snapshot(self) -> dict:
+        return await self._request("POST", "/balance-sheet/snapshot")
+
 
 def get_portfolio_client() -> PortfolioApiClient:
     return PortfolioApiClient()
