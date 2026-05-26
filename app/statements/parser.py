@@ -93,7 +93,9 @@ _JSON_SCHEMA_HINT = """{
     "minimum_payment": null,
     "original_term_months": null,
     "remaining_term_months": null,
-    "account_number": null
+    "account_number": null,
+    "access_facility_enabled": false,
+    "available_redraw_amount": null
   },
   "warnings": ["optional strings"],
   "statement_total": null
@@ -184,6 +186,8 @@ For LOAN statements:
 - Populate parsed_liability with all available loan details from the statement.
 - Extract: outstanding_balance, interest_rate (annual %), minimum_payment (monthly instalment),
   original_term_months, remaining_term_months, account_number.
+- If a FlexiReserve or access bond balance is shown, set access_facility_enabled to true and
+  available_redraw_amount to that balance.
 - Set holdings to an empty array [].
 - Set statement_total to the outstanding balance.
 
@@ -268,6 +272,8 @@ def _auto_detect_loan(
         payment = _extract_amount(pdf_text, r"instalment\s*(?:R?\s*)([\d,]+\.?\d*)")
     acct_num = _extract_text(pdf_text, r"account\s*number\s*([\d]+)")
 
+    flexi = _extract_amount(pdf_text, r"flexireserve\s*balance\s*(?:R?\s*)([\d,]+\.?\d*)")
+
     if balance:
         from decimal import Decimal
 
@@ -280,6 +286,8 @@ def _auto_detect_loan(
             interest_rate=Decimal(str(rate)) if rate else Decimal("0"),
             minimum_payment=Decimal(str(payment)) if payment else None,
             account_number=acct_num,
+            access_facility_enabled=flexi is not None and flexi > 0,
+            available_redraw_amount=Decimal(str(flexi)) if flexi else None,
         )
         result.holdings = []
         result.statement_total = Decimal(str(balance))

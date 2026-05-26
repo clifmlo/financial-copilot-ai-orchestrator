@@ -79,8 +79,14 @@ class ParsedLiability(BaseModel):
     account_number: str | None = Field(
         default=None, description="Loan account number from the statement"
     )
+    access_facility_enabled: bool = Field(
+        default=False, description="True if FlexiReserve / access bond facility is available"
+    )
+    available_redraw_amount: Decimal | None = Field(
+        default=None, ge=0, description="FlexiReserve / available redraw balance"
+    )
 
-    @field_validator("outstanding_balance", "interest_rate", "minimum_payment", mode="before")
+    @field_validator("outstanding_balance", "interest_rate", "minimum_payment", "available_redraw_amount", mode="before")
     @classmethod
     def round_money_fields(cls, v: object) -> object:
         if v is None:
