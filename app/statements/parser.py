@@ -1,11 +1,12 @@
 import json
 import re
+from decimal import Decimal
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import ValidationError
 
 from app.llm import build_chat_model, llm_is_configured, missing_llm_config_message
-from app.statements.schemas import ParsedStatement, StatementProvider
+from app.statements.schemas import MONEY_QUANT, ParsedStatement, StatementProvider
 
 PROVIDER_INSTITUTION = {
     StatementProvider.EASY_EQUITIES: "EasyEquities",
@@ -26,8 +27,10 @@ Use BANK for transactional accounts or ZAR_BROKER if brokerage holdings are list
 Include cash balance as a CASH holding if present.
 """,
     StatementProvider.ABSA: """
-ABSA bank or investment statement. Extract account label, cash balance, and any funds or shares listed.
-Use BANK for bank accounts; use ZAR_BROKER if share/ETF holdings appear.
+ABSA bank, investment, or home loan statement. Extract account label, balances, and any listed items.
+Use BANK for transactional/savings accounts, ZAR_BROKER for share/ETF holdings, LOAN for home loans
+or vehicle finance. For a home loan statement, use the outstanding balance as a single holding with
+symbol "HOME_LOAN", asset_class "OTHER", and the outstanding balance as value.
 """,
     StatementProvider.TENX_RA: """
 10X retirement annuity (RA) statement. Extract RA account name, fund names, and fund values in ZAR.
@@ -38,7 +41,7 @@ Use account_type RA and institution 10X. Each fund is typically an ETF or OTHER 
 _JSON_SCHEMA_HINT = """{
   "account": {
     "name": "string",
-    "account_type": "TFSA|RA|ZAR_BROKER|USD_BROKER|BANK|CASH|OTHER",
+    "account_type": "TFSA|RA|ZAR_BROKER|USD_BROKER|BANK|CASH|LOAN|OTHER",
     "currency": "ZAR",
     "institution": "string"
   },
@@ -52,8 +55,28 @@ _JSON_SCHEMA_HINT = """{
       "quantity": null
     }
   ],
-  "warnings": ["optional strings"]
+  "warnings": ["optional strings"],
+  "statement_total": null
 }"""
+
+
+def _reconcile_totals(result: ParsedStatement) -> ParsedStatement:
+    if not result.holdings:
+        return result
+    line_sum = sum((h.value for h in result.holdings), Decimal("0"))
+    if result.statement_total is not None:
+        diff = abs(line_sum - result.statement_total)
+        # Tolerate small rounding differences (< R1) — typically caused by
+        # the PDF showing a rounded total vs precise line items.
+        if diff > Decimal("1.00"):
+            result.warnings.append(
+                f"Holdings sum to {line_sum} but the statement total is "
+                f"{result.statement_total} (difference {diff}). "
+                "Edit line values or discard and re-upload if needed."
+            )
+        # Use the more precise holdings sum as the effective total
+        result.statement_total = line_sum.quantize(MONEY_QUANT)
+    return result
 
 
 def _message_text(content: object) -> str:
@@ -108,23 +131,24 @@ Provider: {institution}
 Rules:
 - Set account.institution to "{institution}" unless the statement shows a clearer label.
 - Use ISO currency codes (ZAR, USD).
-- For each holding, set value to the market value in that holding's currency.
+- For each holding, set value to the market value in that holding's currency (2 decimal places, as printed).
+- If the statement shows a portfolio/account grand total, set statement_total to that figure with full decimal precision (e.g. 6841.30, not 6841). If the total is a whole number on the PDF, add .00.
 - If only a total balance is shown with no units, use symbol CASH, asset_class CASH, and value as the balance.
 - Omit holdings with zero value.
 - Add warnings for ambiguous or missing fields.
+- Do not round line items; copy amounts exactly as shown on the statement.
 
 Respond with ONLY a single JSON object (no markdown, no commentary) matching this shape:
 {_JSON_SCHEMA_HINT}"""
 
     llm = build_chat_model(max_tokens=8192)
-    response = await llm.ainvoke(
-        [
-            SystemMessage(content=system),
-            HumanMessage(
-                content=f"Extract account and holdings from this statement text:\n\n{text[:80000]}"
-            ),
-        ]
-    )
+    messages = [
+        SystemMessage(content=system),
+        HumanMessage(
+            content=f"Extract account and holdings from this statement text:\n\n{text[:80000]}"
+        ),
+    ]
+    response = llm.invoke(messages)
 
     raw = _message_text(response.content)
     result = _parse_llm_json(raw)
@@ -133,4 +157,4 @@ Respond with ONLY a single JSON object (no markdown, no commentary) matching thi
         result.account.institution = institution
     if not result.holdings:
         result.warnings.append("No holdings were detected. Check the PDF or try another provider.")
-    return result
+    return _reconcile_totals(result)

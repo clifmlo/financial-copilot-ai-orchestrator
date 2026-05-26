@@ -8,6 +8,12 @@ from langgraph.graph.message import add_messages
 from app import agents
 from app.llm import build_chat_model, llm_is_configured, missing_llm_config_message
 from app.tools.portfolio import fetch_dashboard
+from app.tools.balance_sheet import (
+    get_balance_sheet_summary,
+    get_home_equity_tool,
+    list_assets,
+    list_liabilities,
+)
 
 SYSTEM_PROMPT = (Path(__file__).parent.parent / "prompts" / "system_prompt.txt").read_text()
 
@@ -62,11 +68,19 @@ def _route_agent(user_text: str) -> str:
         return agents.RECOMMENDATION
     if any(k in lower for k in ("tax", "cgt", "ra deduction")):
         return agents.TAX
-    if any(k in lower for k in ("bond", "mortgage", "home loan")):
+    if any(k in lower for k in (
+        "bond", "mortgage", "home loan", "extra payment",
+        "overpayment", "amortisation", "amortization",
+    )):
         return agents.BOND_OPTIMISATION
+    if any(k in lower for k in (
+        "balance sheet", "asset", "liabilit", "debt",
+        "equity", "property value", "net worth",
+    )):
+        return agents.BALANCE_SHEET
     if any(k in lower for k in ("risk", "volatility", "drawdown")):
         return agents.RISK_ANALYSIS
-    if any(k in lower for k in ("portfolio", "holding", "net worth", "allocation", "etf", "invest")):
+    if any(k in lower for k in ("portfolio", "holding", "allocation", "etf", "invest")):
         return agents.PORTFOLIO_ANALYSIS
     return agents.GENERAL
 
@@ -79,6 +93,12 @@ async def planner_node(state: AgentState) -> AgentState:
 
 async def portfolio_context_node(state: AgentState) -> AgentState:
     """Load portfolio snapshot from financial-copilot-api for downstream agents."""
+    agent = state.get("active_agent", "")
+
+    # For balance-sheet or bond agents, fetch richer context
+    if agent in {agents.BALANCE_SHEET, agents.BOND_OPTIMISATION}:
+        return await _balance_sheet_context(state)
+
     try:
         dashboard = await fetch_dashboard()
         context = (
@@ -98,11 +118,85 @@ async def portfolio_context_node(state: AgentState) -> AgentState:
     return {**state, "portfolio_context": context}
 
 
+async def _balance_sheet_context(state: AgentState) -> AgentState:
+    """Build rich context for balance-sheet and bond-optimisation agents."""
+    parts: list[str] = []
+
+    try:
+        summary = await get_balance_sheet_summary()
+        parts.append(
+            f"Balance Sheet Summary:\n"
+            f"  Total assets: {summary.get('totalAssets')}\n"
+            f"  Total liabilities: {summary.get('totalLiabilities')}\n"
+            f"  Net worth: {summary.get('netWorth')}"
+        )
+    except Exception as exc:
+        parts.append(f"Balance sheet unavailable: {exc}")
+
+    try:
+        assets = await list_assets()
+        if assets:
+            asset_lines = []
+            for a in assets:
+                asset_lines.append(
+                    f"  - {a.get('name')} ({a.get('assetType')}): "
+                    f"{a.get('currency', 'ZAR')} {a.get('currentValue')}"
+                )
+            parts.append("Assets:\n" + "\n".join(asset_lines))
+    except Exception:
+        pass
+
+    try:
+        liabs = await list_liabilities()
+        if liabs:
+            liab_lines = []
+            for l in liabs:
+                liab_lines.append(
+                    f"  - {l.get('name')} ({l.get('liabilityType')}): "
+                    f"balance {l.get('currency', 'ZAR')} {l.get('outstandingBalance')}, "
+                    f"rate {l.get('interestRate')}%, "
+                    f"payment {l.get('minimumPayment')}/month"
+                )
+            parts.append("Liabilities:\n" + "\n".join(liab_lines))
+    except Exception:
+        pass
+
+    try:
+        equity = await get_home_equity_tool()
+        if equity:
+            parts.append(
+                f"Home Equity:\n"
+                f"  Property: {equity.get('propertyName')} — value {equity.get('propertyValue')}\n"
+                f"  Bond balance: {equity.get('outstandingBalance')}\n"
+                f"  Equity: {equity.get('homeEquity')}"
+            )
+    except Exception:
+        pass
+
+    # Fall back to the dashboard if nothing came through
+    if not parts:
+        try:
+            dashboard = await fetch_dashboard()
+            parts.append(
+                f"Net worth (ZAR): {dashboard.get('netWorthZar')}\n"
+                f"Total assets (ZAR): {dashboard.get('totalAssetsZar')}\n"
+                f"Liabilities (ZAR): {dashboard.get('totalLiabilitiesZar')}"
+            )
+        except Exception as exc:
+            parts.append(
+                f"All financial data unavailable: {exc}. "
+                "Suggest importing data or checking API connectivity."
+            )
+
+    return {**state, "portfolio_context": "\n\n".join(parts)}
+
+
 def _needs_portfolio_context(agent: str) -> bool:
     return agent in {
         agents.PORTFOLIO_ANALYSIS,
         agents.TAX,
         agents.BOND_OPTIMISATION,
+        agents.BALANCE_SHEET,
         agents.RISK_ANALYSIS,
         agents.RECOMMENDATION,
         agents.REPORT_GENERATION,
@@ -136,7 +230,17 @@ async def respond_node(state: AgentState) -> AgentState:
             "Explain the tax point simply; flag that exact numbers come from the portfolio API."
         ),
         agents.BOND_OPTIMISATION: (
-            "Compare bond payoff vs investing in 2–3 sentences using liability figures."
+            "Use the liability and balance-sheet context to explain bond optimisation. "
+            "Compare extra repayment scenarios using the figures provided. "
+            "Explain how access bond deposits reduce daily interest. "
+            "Present scenarios, not commands. Mention assumptions. "
+            "Never invent interest savings or payoff dates — only use figures from context."
+        ),
+        agents.BALANCE_SHEET: (
+            "Explain the user's balance sheet in plain language. "
+            "A home loan is a liability; the property is the asset; the difference is equity. "
+            "Present total assets, total liabilities, net worth, and home equity clearly. "
+            "Never invent balances — only use figures from context."
         ),
         agents.RISK_ANALYSIS: (
             "Summarise main risk/concentration issues in a few bullets from holdings and allocation."

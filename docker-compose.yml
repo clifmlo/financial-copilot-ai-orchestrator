@@ -9,5 +9,6 @@ services:
     environment:
       PORTFOLIO_API_URL: http://host.docker.internal:8080
       CORS_ORIGINS: http://localhost:3000
+      DISABLE_SSL_VERIFY: "1"
     extra_hosts:
       - "host.docker.internal:host-gateway"

@@ -37,6 +37,7 @@ def build_chat_model(*, max_tokens: int | None = None) -> BaseChatModel:
             google_api_key=settings.google_api_key,
             temperature=settings.llm_temperature,
             max_output_tokens=token_limit,
+            transport="rest",
         )
 
     if settings.llm_provider == "azure_openai":

@@ -2,7 +2,8 @@
 HTTP client for financial-copilot-api versioned REST endpoints.
 
 The orchestrator must not access financial data stores directly.
-All portfolio, account, bond, and tax figures are fetched from the Spring Boot API.
+All portfolio, account, asset, liability, bond, and tax figures are
+fetched from the Spring Boot API (system of record).
 """
 
 from typing import Any
@@ -50,6 +51,8 @@ class PortfolioApiClient:
             return None
         return response.json()
 
+    # ----- Dashboard / legacy ------------------------------------------------
+
     async def get_dashboard(self) -> dict:
         return await self._request("GET", "/dashboard")
 
@@ -67,6 +70,81 @@ class PortfolioApiClient:
         if response.is_error:
             raise PortfolioApiError(response.status_code, response.text)
         return response.json()
+
+    # ----- Assets ------------------------------------------------------------
+
+    async def create_asset(self, payload: dict) -> dict:
+        return await self._request("POST", "/assets", json=payload)
+
+    async def list_assets(self) -> list:
+        return await self._request("GET", "/assets")
+
+    async def get_asset(self, asset_id: int) -> dict:
+        return await self._request("GET", f"/assets/{asset_id}")
+
+    async def update_asset(self, asset_id: int, payload: dict) -> dict:
+        return await self._request("PUT", f"/assets/{asset_id}", json=payload)
+
+    async def delete_asset(self, asset_id: int) -> None:
+        return await self._request("DELETE", f"/assets/{asset_id}")
+
+    async def get_valuation_history(self, asset_id: int) -> list:
+        return await self._request("GET", f"/assets/{asset_id}/valuation-history")
+
+    # ----- Liabilities -------------------------------------------------------
+
+    async def create_liability(self, payload: dict) -> dict:
+        return await self._request("POST", "/liabilities", json=payload)
+
+    async def list_liabilities(self) -> list:
+        return await self._request("GET", "/liabilities")
+
+    async def get_liability(self, liability_id: int) -> dict:
+        return await self._request("GET", f"/liabilities/{liability_id}")
+
+    async def update_liability(self, liability_id: int, payload: dict) -> dict:
+        return await self._request("PUT", f"/liabilities/{liability_id}", json=payload)
+
+    async def delete_liability(self, liability_id: int) -> None:
+        return await self._request("DELETE", f"/liabilities/{liability_id}")
+
+    async def link_liability_to_asset(
+        self, liability_id: int, asset_id: int
+    ) -> dict:
+        return await self._request(
+            "POST", f"/liabilities/{liability_id}/link-asset/{asset_id}"
+        )
+
+    async def get_amortisation(self, liability_id: int) -> list:
+        return await self._request(
+            "GET", f"/liabilities/{liability_id}/amortisation"
+        )
+
+    async def simulate_extra_payment(
+        self, liability_id: int, extra_amount: float
+    ) -> dict:
+        return await self._request(
+            "POST",
+            f"/liabilities/{liability_id}/simulate-extra-payment",
+            json={"extraAmount": extra_amount},
+        )
+
+    # ----- Balance sheet -----------------------------------------------------
+
+    async def get_balance_sheet_summary(self) -> dict:
+        return await self._request("GET", "/balance-sheet/summary")
+
+    async def get_net_worth(self) -> dict:
+        return await self._request("GET", "/balance-sheet/net-worth")
+
+    async def get_asset_allocation(self) -> list:
+        return await self._request("GET", "/balance-sheet/asset-allocation")
+
+    async def get_debt_ratio(self) -> dict:
+        return await self._request("GET", "/balance-sheet/debt-ratio")
+
+    async def get_home_equity(self) -> dict:
+        return await self._request("GET", "/balance-sheet/home-equity")
 
 
 def get_portfolio_client() -> PortfolioApiClient:
