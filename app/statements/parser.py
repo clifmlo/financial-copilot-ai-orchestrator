@@ -20,25 +20,42 @@ PROVIDER_HINTS = {
 EasyEquities investment statement. Look for account name (TFSA, ZAR portfolio, USD portfolio),
 holdings with symbols/tickers, quantities, and market values in ZAR or USD.
 Use ZAR_BROKER or USD_BROKER for brokerage accounts, TFSA for tax-free savings.
+This provider only has investment statements, so statement_type is always INVESTMENT.
 """,
     StatementProvider.FNB: """
-FNB bank or investment statement. Look for account number/name, balances, and listed investments.
-Use BANK for transactional accounts or ZAR_BROKER if brokerage holdings are listed.
-Include cash balance as a CASH holding if present.
+FNB bank, investment, or home loan statement.
+- For transactional/savings accounts: use statement_type INVESTMENT, account_type BANK, and
+  list balances as CASH holdings.
+- For brokerage/share portfolio statements: use statement_type INVESTMENT, account_type ZAR_BROKER.
+- For home loan or vehicle finance statements: use statement_type LOAN, account_type LOAN, and
+  populate parsed_liability with the outstanding balance, interest rate, monthly instalment,
+  original and remaining term, and account number.
 """,
     StatementProvider.ABSA: """
-ABSA bank, investment, or home loan statement. Extract account label, balances, and any listed items.
-Use BANK for transactional/savings accounts, ZAR_BROKER for share/ETF holdings, LOAN for home loans
-or vehicle finance. For a home loan statement, use the outstanding balance as a single holding with
-symbol "HOME_LOAN", asset_class "OTHER", and the outstanding balance as value.
+ABSA bank, investment, or home loan statement.
+- For transactional/savings accounts: use statement_type INVESTMENT, account_type BANK, and
+  list balances as CASH holdings.
+- For share/ETF portfolio statements: use statement_type INVESTMENT, account_type ZAR_BROKER.
+- For home loan or vehicle finance statements: use statement_type LOAN, account_type LOAN, and
+  populate parsed_liability with:
+  - liability_type: HOME_LOAN for home loans, VEHICLE_FINANCE for vehicle finance
+  - outstanding_balance: the current outstanding balance
+  - interest_rate: the annual interest rate (e.g. 9.4 for 9.4%)
+  - minimum_payment: the monthly instalment amount
+  - original_term_months: the original loan term in months (e.g. 240 for 20 years)
+  - remaining_term_months: remaining months if shown
+  - account_number: the loan account number
+  Holdings should be empty for loan statements.
 """,
     StatementProvider.TENX_RA: """
 10X retirement annuity (RA) statement. Extract RA account name, fund names, and fund values in ZAR.
 Use account_type RA and institution 10X. Each fund is typically an ETF or OTHER holding.
+This provider only has investment statements, so statement_type is always INVESTMENT.
 """,
 }
 
 _JSON_SCHEMA_HINT = """{
+  "statement_type": "INVESTMENT or LOAN",
   "account": {
     "name": "string",
     "account_type": "TFSA|RA|ZAR_BROKER|USD_BROKER|BANK|CASH|LOAN|OTHER",
@@ -55,6 +72,18 @@ _JSON_SCHEMA_HINT = """{
       "quantity": null
     }
   ],
+  "parsed_liability": {
+    "liability_type": "HOME_LOAN|VEHICLE_FINANCE|PERSONAL_LOAN|CREDIT_CARD|STUDENT_LOAN|BUSINESS_LOAN|OTHER",
+    "name": "string",
+    "institution": "string",
+    "currency": "ZAR",
+    "outstanding_balance": 0.0,
+    "interest_rate": 0.0,
+    "minimum_payment": null,
+    "original_term_months": null,
+    "remaining_term_months": null,
+    "account_number": null
+  },
   "warnings": ["optional strings"],
   "statement_total": null
 }"""
@@ -66,15 +95,12 @@ def _reconcile_totals(result: ParsedStatement) -> ParsedStatement:
     line_sum = sum((h.value for h in result.holdings), Decimal("0"))
     if result.statement_total is not None:
         diff = abs(line_sum - result.statement_total)
-        # Tolerate small rounding differences (< R1) — typically caused by
-        # the PDF showing a rounded total vs precise line items.
         if diff > Decimal("1.00"):
             result.warnings.append(
                 f"Holdings sum to {line_sum} but the statement total is "
                 f"{result.statement_total} (difference {diff}). "
                 "Edit line values or discard and re-upload if needed."
             )
-        # Use the more precise holdings sum as the effective total
         result.statement_total = line_sum.quantize(MONEY_QUANT)
     return result
 
@@ -124,28 +150,47 @@ async def parse_statement_pdf(text: str, provider: StatementProvider) -> ParsedS
         raise RuntimeError(missing_llm_config_message())
 
     institution = PROVIDER_INSTITUTION[provider]
-    system = f"""You extract structured portfolio data from South African financial PDF statements.
+    system = f"""You extract structured data from South African financial PDF statements.
 Provider: {institution}
 {PROVIDER_HINTS[provider]}
 
 Rules:
+- First determine if the statement is an investment/bank statement or a loan statement.
+- Set statement_type to "INVESTMENT" for bank/investment/portfolio statements.
+- Set statement_type to "LOAN" for home loan, vehicle finance, or any loan/bond statements.
 - Set account.institution to "{institution}" unless the statement shows a clearer label.
 - Use ISO currency codes (ZAR, USD).
-- For each holding, set value to the market value in that holding's currency (2 decimal places, as printed).
-- If the statement shows a portfolio/account grand total, set statement_total to that figure with full decimal precision (e.g. 6841.30, not 6841). If the total is a whole number on the PDF, add .00.
-- If only a total balance is shown with no units, use symbol CASH, asset_class CASH, and value as the balance.
+
+For INVESTMENT statements:
+- For each holding, set value to the market value in that holding's currency (2 decimal places).
+- If the statement shows a portfolio/account grand total, set statement_total.
+- If only a total balance is shown with no units, use symbol CASH, asset_class CASH.
 - Omit holdings with zero value.
+- Set parsed_liability to null.
+
+For LOAN statements:
+- Set account.account_type to "LOAN".
+- Populate parsed_liability with all available loan details from the statement.
+- Extract: outstanding_balance, interest_rate (annual %), minimum_payment (monthly instalment),
+  original_term_months, remaining_term_months, account_number.
+- Set holdings to an empty array [].
+- Set statement_total to the outstanding balance.
+
+General:
 - Add warnings for ambiguous or missing fields.
 - Do not round line items; copy amounts exactly as shown on the statement.
 
 Respond with ONLY a single JSON object (no markdown, no commentary) matching this shape:
-{_JSON_SCHEMA_HINT}"""
+{_JSON_SCHEMA_HINT}
+
+For INVESTMENT statements, set parsed_liability to null.
+For LOAN statements, set holdings to [] and populate parsed_liability."""
 
     llm = build_chat_model(max_tokens=8192)
     messages = [
         SystemMessage(content=system),
         HumanMessage(
-            content=f"Extract account and holdings from this statement text:\n\n{text[:80000]}"
+            content=f"Extract data from this statement text:\n\n{text[:80000]}"
         ),
     ]
     response = llm.invoke(messages)
@@ -155,6 +200,20 @@ Respond with ONLY a single JSON object (no markdown, no commentary) matching thi
 
     if not result.account.institution:
         result.account.institution = institution
-    if not result.holdings:
-        result.warnings.append("No holdings were detected. Check the PDF or try another provider.")
+
+    if result.statement_type == "LOAN":
+        if result.parsed_liability and not result.parsed_liability.institution:
+            result.parsed_liability.institution = institution
+        if result.parsed_liability and not result.parsed_liability.name:
+            result.parsed_liability.name = result.account.name
+        if not result.parsed_liability:
+            result.warnings.append(
+                "This looks like a loan statement but no loan details could be extracted."
+            )
+    else:
+        if not result.holdings:
+            result.warnings.append(
+                "No holdings were detected. Check the PDF or try another provider."
+            )
+
     return _reconcile_totals(result)
