@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from typing import Annotated, TypedDict
 
@@ -6,6 +7,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 
 from app import agents
+from app.config import settings
 from app.llm import build_chat_model, llm_is_configured, missing_llm_config_message
 from app.tools.portfolio import fetch_dashboard
 from app.tools.balance_sheet import (
@@ -261,7 +263,11 @@ async def respond_node(state: AgentState) -> AgentState:
         )
     )
     history = trim_message_history(state["messages"], 20)
-    response = await llm.ainvoke([system, *history])
+    # REST transport does not support LangChain async LLM calls (see langchain-google#791).
+    if settings.llm_provider == "gemini":
+        response = await asyncio.to_thread(llm.invoke, [system, *history])
+    else:
+        response = await llm.ainvoke([system, *history])
     return {**state, "messages": state["messages"] + [response]}
 
 
