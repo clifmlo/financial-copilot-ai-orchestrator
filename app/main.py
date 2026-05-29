@@ -49,7 +49,7 @@ if os.environ.get("DISABLE_SSL_VERIFY", "").strip().lower() in ("1", "true", "ye
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import agents, assets, balance_sheet, chat, health, liabilities, statements
+from app.api.routes import agents, assets, balance_sheet, cashflow, chat, health, liabilities, statements
 from app.config import settings
 
 app = FastAPI(
@@ -75,6 +75,7 @@ app.include_router(health.router)
 app.include_router(chat.router)
 app.include_router(agents.router)
 app.include_router(statements.router)
+app.include_router(cashflow.router)
 app.include_router(assets.router)
 app.include_router(liabilities.router)
 app.include_router(balance_sheet.router)
